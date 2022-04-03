@@ -2,12 +2,19 @@ use std::time::Duration;
 
 use bevy_asset_loader::{AssetCollection, AssetLoader};
 use bevy_tweening::{component_animator_system, Animator, EaseFunction, Lens, Tween, TweeningType};
+use heron::{prelude::*};
 
 use crate::*;
 
 const FADE_IN_TIME: Duration = Duration::from_secs(5);
 const FADE_OUT_TIME: Duration = Duration::from_secs(5);
 const OVERLAY_COLOR: Color = Color::BLACK;
+const CONTROL_POWER: f32 = 7.0;
+const LINEAR_DAMPING: f32 = 1.0;
+const ANGULAR_DAMPING: f32 = 1.0;
+
+const ROTATE_HAND_LEFT_KEY: KeyCode = KeyCode::Left;
+const ROTATE_HAND_RIGHT_KEY: KeyCode = KeyCode::Right;
 
 pub struct GamePlugin;
 
@@ -25,8 +32,10 @@ impl Plugin for GamePlugin {
                     .with_system(despawn_components_system::<GameComponent>),
             )
             .add_event::<FadeEvent>()
+            .add_plugin(PhysicsPlugin::default())
             .add_system(component_animator_system::<UiColor>)
-            .add_system(fade_system);
+            .add_system(fade_system)
+            .add_system(hand_control_system);
     }
 }
 
@@ -83,7 +92,7 @@ fn game_setup(
         })
         .insert(Overlay);
 
-    let arm_position = Vec3::new(0.0, 0.0, 1.0);
+    let arm_position = Vec3::new(200.0, -200.0, 1.0);
     let arm_scale = Vec3::ONE;
 
     commands
@@ -111,7 +120,17 @@ fn game_setup(
             },
             ..Default::default()
         })
-        .insert(Hand);
+        .insert(Hand)
+        .insert(RigidBody::Dynamic)
+        .insert(CollisionShape::Sphere { radius: 10.0 })
+        .insert(Velocity::from_linear(Vec3::ZERO))
+        .insert(Acceleration::from_linear(Vec3::ZERO))
+        .insert(Damping::from_linear(LINEAR_DAMPING).with_angular(ANGULAR_DAMPING))
+        .insert(PhysicMaterial {
+            friction: 1.0,
+            density: 10.0,
+            ..Default::default()
+        });
 
     event_writer.send(FadeEvent(FadeDirection::In));
 }
@@ -178,4 +197,28 @@ fn fade_ui_color(
         },
     );
     commands.entity(entity).insert(Animator::new(tween));
+}
+
+/// Handles moving the hand around
+fn hand_control_system(
+    keyboard: Res<Input<KeyCode>>,
+    mut query: Query<&mut Acceleration, With<Hand>>,
+) {
+    for mut accel in query.iter_mut() {
+        if keyboard.pressed(ROTATE_HAND_LEFT_KEY) {
+            accel.angular = AxisAngle::new(Vec3::Z, CONTROL_POWER);
+        } else if keyboard.pressed(ROTATE_HAND_RIGHT_KEY) {
+            accel.angular = AxisAngle::new(Vec3::Z, -CONTROL_POWER);
+        } else {
+            accel.angular = AxisAngle::new(Vec3::Z, 0.0);
+        }
+
+        if keyboard.pressed(KeyCode::Up) {
+            accel.linear.y = CONTROL_POWER;
+        } else if keyboard.pressed(KeyCode::Down) {
+            accel.linear.y = -CONTROL_POWER;
+        } else {
+            accel.linear.y = 0.0;
+        }
+    }
 }

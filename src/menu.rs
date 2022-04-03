@@ -119,9 +119,9 @@ fn menu_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 /// Handles interactions with the start button.
 fn start_button_system(
     mut game_state: ResMut<State<GameState>>,
-    interaction_query: Query<(&Interaction, &StartButton), Changed<Interaction>>,
+    interaction_query: Query<&Interaction, Changed<Interaction>>,
 ) {
-    for (interaction, start_button) in interaction_query.iter() {
+    for interaction in interaction_query.iter() {
         if *interaction == Interaction::Clicked {
             game_state.set(GameState::GameLoading).unwrap();
         }

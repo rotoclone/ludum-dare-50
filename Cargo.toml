@@ -11,3 +11,4 @@ bevy-inspector-egui = "0.9.0"
 rand = "0.8.5"
 bevy_tweening = "0.3.3"
 bevy_asset_loader = "0.9.0"
+heron = { version = "2.3.0", features = ["2d"] }

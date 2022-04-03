@@ -9,13 +9,24 @@ use crate::*;
 const FADE_IN_TIME: Duration = Duration::from_secs(5);
 const FADE_OUT_TIME: Duration = Duration::from_secs(5);
 const OVERLAY_COLOR: Color = Color::BLACK;
-const CONTROL_POWER: f32 = 2.0;
+const HAND_CONTROL_POWER: f32 = 2.0;
+const ARM_CONTROL_POWER: f32 = 1.0;
+const ARM_EXTENSION_CONTROL_POWER: f32 = 150.0;
 const LINEAR_DAMPING: f32 = 1.0;
 const ANGULAR_DAMPING: f32 = 1.0;
-const MOTOR_FACTOR: f32 = 0.05;
+const HAND_MOTOR_FACTOR: f32 = 0.1;
+const ARM_MOTOR_FACTOR: f32 = 0.05;
 
-const ROTATE_HAND_LEFT_KEY: KeyCode = KeyCode::Left;
-const ROTATE_HAND_RIGHT_KEY: KeyCode = KeyCode::Right;
+const ARM_EXTENSION_LIMIT: f32 = 750.0;
+const ARM_RETRACTION_LIMIT: f32 = 1700.0;
+
+const ROTATE_HAND_UP_KEY: KeyCode = KeyCode::W;
+const ROTATE_HAND_DOWN_KEY: KeyCode = KeyCode::S;
+const ROTATE_ARM_UP_KEY: KeyCode = KeyCode::Up;
+const ROTATE_ARM_DOWN_KEY: KeyCode = KeyCode::Down;
+const EXTEND_ARM_KEY: KeyCode = KeyCode::Left;
+const RETRACT_ARM_KEY: KeyCode = KeyCode::Right;
+const PRESS_KEY: KeyCode = KeyCode::Space;
 
 pub struct GamePlugin;
 
@@ -34,14 +45,16 @@ impl Plugin for GamePlugin {
             )
             .add_event::<FadeEvent>()
             .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
-            //TODO .add_plugin(RapierRenderPlugin)
+            .add_plugin(RapierRenderPlugin) //TODO
             .insert_resource(RapierConfiguration {
                 gravity: Vector::zeros(),
                 ..Default::default()
             })
             .add_system(component_animator_system::<UiColor>)
             .add_system(fade_system)
-            .add_system(hand_control_system);
+            .add_system(hand_control_system)
+            .add_system(arm_rotation_system)
+            .add_system(arm_extension_system);
     }
 
     fn name(&self) -> &str {
@@ -78,6 +91,9 @@ struct Hand;
 #[derive(Component)]
 struct Arm;
 
+#[derive(Component)]
+struct ArmAnchor;
+
 struct FadeEvent(FadeDirection);
 
 enum FadeDirection {
@@ -102,21 +118,59 @@ fn game_setup(
         })
         .insert(Overlay);
 
-    let arm_position = Vec3::new(200.0, -200.0, 1.0);
-    let arm_scale = Vec3::ONE;
+    // spawn arm anchor
+    let arm_anchor_position = Vec3::new(1400.0, 0.0, 0.0);
+    let arm_anchor = commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::WHITE,
+                ..Default::default()
+            },
+            transform: Transform {
+                translation: arm_anchor_position,
+                scale: Vec3::new(10.0, 10.0, 1.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .insert_bundle(RigidBodyBundle {
+            position: arm_anchor_position.into(),
+            damping: RigidBodyDamping {
+                linear_damping: LINEAR_DAMPING,
+                angular_damping: ANGULAR_DAMPING,
+            }
+            .into(),
+            body_type: RigidBodyType::KinematicVelocityBased.into(),
+            mass_properties: RigidBodyMassPropsFlags::ROTATION_LOCKED.into(),
+            ..Default::default()
+        })
+        .insert_bundle(ColliderBundle {
+            shape: ColliderShape::ball(10.0).into(),
+            collider_type: ColliderType::Sensor.into(),
+            mass_properties: ColliderMassProps::Density(1.0).into(),
+            ..Default::default()
+        })
+        .insert(ColliderPositionSync::Discrete)
+        //TODO .insert(ColliderDebugRender::with_id(0))
+        .insert(ArmAnchor)
+        .id();
 
+    // spawn arm
+    let arm_position = Vec3::new(500.0, 0.0, 1.0);
+    let arm_rotation = Quat::from_rotation_z(-0.79);
+    let arm_scale = Vec3::ONE;
     let arm = commands
         .spawn_bundle(SpriteBundle {
             texture: image_assets.arm.clone(),
             transform: Transform {
                 translation: arm_position,
+                rotation: arm_rotation,
                 scale: arm_scale,
-                ..Default::default()
             },
             ..Default::default()
         })
         .insert_bundle(RigidBodyBundle {
-            position: arm_position.into(),
+            position: (arm_position, arm_rotation).into(),
             damping: RigidBodyDamping {
                 linear_damping: LINEAR_DAMPING,
                 angular_damping: ANGULAR_DAMPING,
@@ -125,34 +179,32 @@ fn game_setup(
             ..Default::default()
         })
         .insert_bundle(ColliderBundle {
-            shape: ColliderShape::ball(1.0).into(),
-            material: ColliderMaterial {
-                restitution: 0.7,
-                ..Default::default()
-            }
-            .into(),
+            shape: ColliderShape::ball(100.0).into(),
+            collider_type: ColliderType::Sensor.into(),
+            mass_properties: ColliderMassProps::Density(1.0).into(),
             ..Default::default()
         })
         .insert(ColliderPositionSync::Discrete)
-        //TODO .insert(ColliderDebugRender::with_id(0))
+        //TODO .insert(ColliderDebugRender::with_id(1))
         .insert(Arm)
         .id();
 
+    // spawn hand
     let hand_position = Vec3::new(0.0, 0.0, 2.0);
+    let hand_rotation = Quat::from_rotation_z(0.0);
     let hand_scale = Vec3::ONE;
-
     let hand = commands
         .spawn_bundle(SpriteBundle {
             texture: image_assets.hand.clone(),
             transform: Transform {
                 translation: hand_position,
+                rotation: hand_rotation,
                 scale: hand_scale,
-                ..Default::default()
             },
             ..Default::default()
         })
         .insert_bundle(RigidBodyBundle {
-            position: hand_position.into(),
+            position: (hand_position, hand_rotation).into(),
             damping: RigidBodyDamping {
                 linear_damping: LINEAR_DAMPING,
                 angular_damping: ANGULAR_DAMPING,
@@ -161,26 +213,34 @@ fn game_setup(
             ..Default::default()
         })
         .insert_bundle(ColliderBundle {
-            shape: ColliderShape::ball(0.5).into(),
-            material: ColliderMaterial {
-                restitution: 0.7,
-                ..Default::default()
-            }
-            .into(),
+            shape: ColliderShape::ball(100.0).into(),
+            mass_properties: ColliderMassProps::Density(1.0).into(),
             ..Default::default()
         })
         .insert(ColliderPositionSync::Discrete)
-        //TODO .insert(ColliderDebugRender::with_id(1))
+        //TODO .insert(ColliderDebugRender::with_id(2))
         .insert(Hand)
         .id();
 
-    let joint = RevoluteJoint::new()
+    // attach arm to arm anchor
+    let arm_joint = RevoluteJoint::new()
+        .local_anchor1(point![-50.0, 0.0])
+        .local_anchor2(point![300.0, -250.0])
+        .motor_model(MotorModel::VelocityBased)
+        .motor_velocity(0.0, ARM_MOTOR_FACTOR);
+    commands
+        .entity(arm)
+        .insert(JointBuilderComponent::new(arm_joint, arm_anchor, arm));
+
+    // attach hand to arm
+    let hand_joint = RevoluteJoint::new()
         .local_anchor1(point![-300.0, 250.0])
         .local_anchor2(point![130.0, -120.0])
-        .motor_velocity(0.0, MOTOR_FACTOR);
+        .motor_model(MotorModel::VelocityBased)
+        .motor_velocity(0.0, HAND_MOTOR_FACTOR);
     commands
         .entity(hand)
-        .insert(JointBuilderComponent::new(joint, arm, hand));
+        .insert(JointBuilderComponent::new(hand_joint, arm, hand));
 
     event_writer.send(FadeEvent(FadeDirection::In));
 }
@@ -253,24 +313,88 @@ fn fade_ui_color(
 fn hand_control_system(
     keyboard: Res<Input<KeyCode>>,
     mut joint_set: ResMut<ImpulseJointSet>,
-    query: Query<&JointHandleComponent, With<Hand>>,
+    mut query: Query<(&JointHandleComponent, &mut RigidBodyActivationComponent), With<Hand>>,
 ) {
-    for joint_handle in query.iter() {
+    for (joint_handle, mut activation) in query.iter_mut() {
         let joint = joint_set
             .get_mut(joint_handle.handle())
             .expect("couldn't find joint");
-        if keyboard.pressed(ROTATE_HAND_LEFT_KEY) {
-            joint.data = joint
-                .data
-                .motor_velocity(JointAxis::AngX, CONTROL_POWER, MOTOR_FACTOR);
-        } else if keyboard.pressed(ROTATE_HAND_RIGHT_KEY) {
-            joint.data = joint
-                .data
-                .motor_velocity(JointAxis::AngX, -CONTROL_POWER, MOTOR_FACTOR);
+
+        if keyboard.pressed(ROTATE_HAND_DOWN_KEY) {
+            activation.wake_up(true);
+            joint.data =
+                joint
+                    .data
+                    .motor_velocity(JointAxis::AngX, HAND_CONTROL_POWER, HAND_MOTOR_FACTOR);
+        } else if keyboard.pressed(ROTATE_HAND_UP_KEY) {
+            activation.wake_up(true);
+            joint.data =
+                joint
+                    .data
+                    .motor_velocity(JointAxis::AngX, -HAND_CONTROL_POWER, HAND_MOTOR_FACTOR);
         } else {
             joint.data = joint
                 .data
-                .motor_velocity(JointAxis::AngX, 0.0, MOTOR_FACTOR);
+                .motor_velocity(JointAxis::AngX, 0.0, HAND_MOTOR_FACTOR);
+        }
+    }
+}
+
+/// Handles rotating the arm
+fn arm_rotation_system(
+    keyboard: Res<Input<KeyCode>>,
+    mut joint_set: ResMut<ImpulseJointSet>,
+    mut query: Query<(&JointHandleComponent, &mut RigidBodyActivationComponent), With<Arm>>,
+) {
+    for (joint_handle, mut activation) in query.iter_mut() {
+        let joint = joint_set
+            .get_mut(joint_handle.handle())
+            .expect("couldn't find joint");
+
+        if keyboard.pressed(ROTATE_ARM_DOWN_KEY) {
+            activation.wake_up(true);
+            joint.data =
+                joint
+                    .data
+                    .motor_velocity(JointAxis::AngX, ARM_CONTROL_POWER, ARM_MOTOR_FACTOR);
+        } else if keyboard.pressed(ROTATE_ARM_UP_KEY) {
+            activation.wake_up(true);
+            joint.data =
+                joint
+                    .data
+                    .motor_velocity(JointAxis::AngX, -ARM_CONTROL_POWER, ARM_MOTOR_FACTOR);
+        } else {
+            joint.data = joint
+                .data
+                .motor_velocity(JointAxis::AngX, 0.0, ARM_MOTOR_FACTOR);
+        }
+    }
+}
+
+/// Handles extending and retracting the arm
+fn arm_extension_system(
+    keyboard: Res<Input<KeyCode>>,
+    mut query: Query<
+        (
+            &mut RigidBodyVelocityComponent,
+            &RigidBodyPositionComponent,
+            &mut RigidBodyActivationComponent,
+        ),
+        With<ArmAnchor>,
+    >,
+) {
+    for (mut velocity, position, mut activation) in query.iter_mut() {
+        if keyboard.pressed(EXTEND_ARM_KEY) && position.position.translation.x > ARM_EXTENSION_LIMIT
+        {
+            activation.wake_up(true);
+            velocity.linvel = Vec2::new(-ARM_EXTENSION_CONTROL_POWER, 0.0).into();
+        } else if keyboard.pressed(RETRACT_ARM_KEY)
+            && position.position.translation.x < ARM_RETRACTION_LIMIT
+        {
+            activation.wake_up(true);
+            velocity.linvel = Vec2::new(ARM_EXTENSION_CONTROL_POWER, 0.0).into();
+        } else {
+            velocity.linvel = Vec2::new(0.0, 0.0).into();
         }
     }
 }

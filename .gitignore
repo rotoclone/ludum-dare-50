@@ -3,5 +3,7 @@
 
 
 # Added by cargo
-
 /target
+
+# WASM build
+/out

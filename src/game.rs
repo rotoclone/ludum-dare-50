@@ -1,17 +1,18 @@
 use std::time::Duration;
 
 use bevy_asset_loader::{AssetCollection, AssetLoader};
+use bevy_rapier2d::{physics::JointHandleComponent, prelude::*};
 use bevy_tweening::{component_animator_system, Animator, EaseFunction, Lens, Tween, TweeningType};
-use heron::{prelude::*};
 
 use crate::*;
 
 const FADE_IN_TIME: Duration = Duration::from_secs(5);
 const FADE_OUT_TIME: Duration = Duration::from_secs(5);
 const OVERLAY_COLOR: Color = Color::BLACK;
-const CONTROL_POWER: f32 = 7.0;
+const CONTROL_POWER: f32 = 2.0;
 const LINEAR_DAMPING: f32 = 1.0;
 const ANGULAR_DAMPING: f32 = 1.0;
+const MOTOR_FACTOR: f32 = 0.05;
 
 const ROTATE_HAND_LEFT_KEY: KeyCode = KeyCode::Left;
 const ROTATE_HAND_RIGHT_KEY: KeyCode = KeyCode::Right;
@@ -32,10 +33,19 @@ impl Plugin for GamePlugin {
                     .with_system(despawn_components_system::<GameComponent>),
             )
             .add_event::<FadeEvent>()
-            .add_plugin(PhysicsPlugin::default())
+            .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
+            //TODO .add_plugin(RapierRenderPlugin)
+            .insert_resource(RapierConfiguration {
+                gravity: Vector::zeros(),
+                ..Default::default()
+            })
             .add_system(component_animator_system::<UiColor>)
             .add_system(fade_system)
             .add_system(hand_control_system);
+    }
+
+    fn name(&self) -> &str {
+        std::any::type_name::<Self>()
     }
 }
 
@@ -95,7 +105,7 @@ fn game_setup(
     let arm_position = Vec3::new(200.0, -200.0, 1.0);
     let arm_scale = Vec3::ONE;
 
-    commands
+    let arm = commands
         .spawn_bundle(SpriteBundle {
             texture: image_assets.arm.clone(),
             transform: Transform {
@@ -105,12 +115,33 @@ fn game_setup(
             },
             ..Default::default()
         })
-        .insert(Arm);
+        .insert_bundle(RigidBodyBundle {
+            position: arm_position.into(),
+            damping: RigidBodyDamping {
+                linear_damping: LINEAR_DAMPING,
+                angular_damping: ANGULAR_DAMPING,
+            }
+            .into(),
+            ..Default::default()
+        })
+        .insert_bundle(ColliderBundle {
+            shape: ColliderShape::ball(1.0).into(),
+            material: ColliderMaterial {
+                restitution: 0.7,
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        })
+        .insert(ColliderPositionSync::Discrete)
+        //TODO .insert(ColliderDebugRender::with_id(0))
+        .insert(Arm)
+        .id();
 
     let hand_position = Vec3::new(0.0, 0.0, 2.0);
     let hand_scale = Vec3::ONE;
 
-    commands
+    let hand = commands
         .spawn_bundle(SpriteBundle {
             texture: image_assets.hand.clone(),
             transform: Transform {
@@ -120,17 +151,36 @@ fn game_setup(
             },
             ..Default::default()
         })
-        .insert(Hand)
-        .insert(RigidBody::Dynamic)
-        .insert(CollisionShape::Sphere { radius: 10.0 })
-        .insert(Velocity::from_linear(Vec3::ZERO))
-        .insert(Acceleration::from_linear(Vec3::ZERO))
-        .insert(Damping::from_linear(LINEAR_DAMPING).with_angular(ANGULAR_DAMPING))
-        .insert(PhysicMaterial {
-            friction: 1.0,
-            density: 10.0,
+        .insert_bundle(RigidBodyBundle {
+            position: hand_position.into(),
+            damping: RigidBodyDamping {
+                linear_damping: LINEAR_DAMPING,
+                angular_damping: ANGULAR_DAMPING,
+            }
+            .into(),
             ..Default::default()
-        });
+        })
+        .insert_bundle(ColliderBundle {
+            shape: ColliderShape::ball(0.5).into(),
+            material: ColliderMaterial {
+                restitution: 0.7,
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        })
+        .insert(ColliderPositionSync::Discrete)
+        //TODO .insert(ColliderDebugRender::with_id(1))
+        .insert(Hand)
+        .id();
+
+    let joint = RevoluteJoint::new()
+        .local_anchor1(point![-300.0, 250.0])
+        .local_anchor2(point![130.0, -120.0])
+        .motor_velocity(0.0, MOTOR_FACTOR);
+    commands
+        .entity(hand)
+        .insert(JointBuilderComponent::new(joint, arm, hand));
 
     event_writer.send(FadeEvent(FadeDirection::In));
 }
@@ -202,23 +252,25 @@ fn fade_ui_color(
 /// Handles moving the hand around
 fn hand_control_system(
     keyboard: Res<Input<KeyCode>>,
-    mut query: Query<&mut Acceleration, With<Hand>>,
+    mut joint_set: ResMut<ImpulseJointSet>,
+    query: Query<&JointHandleComponent, With<Hand>>,
 ) {
-    for mut accel in query.iter_mut() {
+    for joint_handle in query.iter() {
+        let joint = joint_set
+            .get_mut(joint_handle.handle())
+            .expect("couldn't find joint");
         if keyboard.pressed(ROTATE_HAND_LEFT_KEY) {
-            accel.angular = AxisAngle::new(Vec3::Z, CONTROL_POWER);
+            joint.data = joint
+                .data
+                .motor_velocity(JointAxis::AngX, CONTROL_POWER, MOTOR_FACTOR);
         } else if keyboard.pressed(ROTATE_HAND_RIGHT_KEY) {
-            accel.angular = AxisAngle::new(Vec3::Z, -CONTROL_POWER);
+            joint.data = joint
+                .data
+                .motor_velocity(JointAxis::AngX, -CONTROL_POWER, MOTOR_FACTOR);
         } else {
-            accel.angular = AxisAngle::new(Vec3::Z, 0.0);
-        }
-
-        if keyboard.pressed(KeyCode::Up) {
-            accel.linear.y = CONTROL_POWER;
-        } else if keyboard.pressed(KeyCode::Down) {
-            accel.linear.y = -CONTROL_POWER;
-        } else {
-            accel.linear.y = 0.0;
+            joint.data = joint
+                .data
+                .motor_velocity(JointAxis::AngX, 0.0, MOTOR_FACTOR);
         }
     }
 }

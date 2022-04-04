@@ -105,16 +105,16 @@ impl Plugin for GamePlugin {
         .insert_resource(MissTimer(Timer::from_seconds(MISS_PENALTY_SECONDS, false)))
         .insert_resource(NumSnoozes(0))
         .add_system(component_animator_system::<UiColor>)
-        .add_system(fade_system)
+        .add_system(fade_system.label("fade").after("sleep"))
         .add_system(hand_rotation_system)
         .add_system(arm_rotation_system)
         .add_system(arm_extension_system)
-        .add_system(valid_press_position_system)
-        .add_system(press_system)
-        .add_system(sleep_system)
+        .add_system(valid_press_position_system.label("valid_press"))
+        .add_system(press_system.label("press").after("valid_press"))
+        .add_system(snooze_system.label("snooze").after("press"))
+        .add_system(sleep_system.label("sleep").after("snooze"))
         .add_system(vibration_system)
         .add_system(table_bounds_system)
-        .add_system(snooze_system)
         .add_system(miss_penalty_system);
     }
 

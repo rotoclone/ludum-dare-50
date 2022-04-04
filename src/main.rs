@@ -2,9 +2,11 @@ use bevy::{
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     prelude::*,
 };
+use bevy_asset_loader::{AssetCollection, AssetLoader};
 use bevy_inspector_egui::{WorldInspectorParams, WorldInspectorPlugin};
 
 mod menu;
+use bevy_kira_audio::AudioPlugin;
 use bevy_tweening::TweeningPlugin;
 use menu::*;
 
@@ -28,6 +30,12 @@ pub enum GameState {
     GameLoading,
     Game,
     GameOver,
+}
+
+#[derive(AssetCollection)]
+struct FontAssets {
+    #[asset(path = "fonts/FiraMono-Medium.ttf")]
+    main: Handle<Font>,
 }
 
 /// Generic system that takes a component as a parameter, and will despawn all entities with that component
@@ -77,6 +85,9 @@ fn world_inspector_system(
 
 fn main() {
     let mut app = App::new();
+    AssetLoader::new(GameState::Menu)
+        .with_collection::<FontAssets>()
+        .build(&mut app);
     app.insert_resource(ClearColor(Color::BLACK))
         .insert_resource(WindowDescriptor {
             title: "Snooze".to_string(),
@@ -91,6 +102,7 @@ fn main() {
         .add_plugin(GameOverPlugin)
         .add_system(button_color_system)
         .add_plugins(DefaultPlugins)
+        .add_plugin(AudioPlugin)
         .add_plugin(TweeningPlugin);
 
     if DEV_MODE {

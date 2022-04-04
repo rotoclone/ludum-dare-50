@@ -99,7 +99,7 @@ fn menu_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 .with_children(|parent| {
                     parent.spawn_bundle(TextBundle {
                         text: Text::with_section(
-                            "Start",
+                            "Go to sleep",
                             TextStyle {
                                 font: font.clone(),
                                 font_size: 40.0,

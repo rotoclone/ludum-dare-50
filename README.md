@@ -2,6 +2,8 @@
 
 For Ludum Dare 50: https://ldjam.com/events/ludum-dare/50
 
+https://ldjam.com/events/ludum-dare/50/snooze-2
+
 ## Building for web
 ### Prerequisites
 * `rustup target install wasm32-unknown-unknown`
